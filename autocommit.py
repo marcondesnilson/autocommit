@@ -331,13 +331,40 @@ def incrementar_versao(versao_atual, tipo_incremento):
         print(f"⚠️  Erro ao incrementar versão: {e}")
         return versao_atual
 
+def restaurar_versao(versao_anterior):
+    """Restaura a versão anterior do arquivo VERSION e remove do stage do git"""
+    if not versao_anterior:
+        return
+    
+    try:
+        print(f"↩️  Restaurando versão anterior: {versao_anterior}")
+        
+        # Remove o arquivo VERSION do index do git primeiro (se estiver lá)
+        try:
+            version_file = os.path.join(os.getcwd(), "VERSION")
+            current_dir = os.getcwd()
+            if os.path.exists(os.path.join(current_dir, ".git")):
+                subprocess.run(["git", "reset", "HEAD", version_file], 
+                             check=False, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                subprocess.run(["git", "restore", "--staged", version_file], 
+                             check=False, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        except Exception:
+            pass  # Ignora erros (pode não ser um repo git)
+        
+        # Restaura o conteúdo do arquivo VERSION
+        if escrever_versao(versao_anterior):
+            print(f"✅ Versão restaurada para: {versao_anterior}")
+    except Exception as e:
+        print(f"⚠️  Erro ao restaurar versão: {e}")
+
 def atualizar_versao(diff_text):
-    """Atualiza a versão do projeto baseado nas alterações"""
+    """Atualiza a versão do projeto baseado nas alterações. Retorna (nova_versao, versao_anterior)"""
     if not ENABLE_VERSIONING:
-        return None
+        return (None, None)
     
     try:
         versao_atual = ler_versao()
+        versao_anterior = versao_atual  # Salva a versão anterior para possível rollback
         print(f"📦 Versão atual: {versao_atual}")
         
         print("🔄 Analisando tipo de alteração para versionamento...")
@@ -345,7 +372,7 @@ def atualizar_versao(diff_text):
         
         if not tipo_alteracao:
             print("⚠️  Não foi possível determinar o tipo de alteração. Mantendo versão atual.")
-            return None
+            return (None, None)
         
         nova_versao = incrementar_versao(versao_atual, tipo_alteracao)
         
@@ -358,14 +385,14 @@ def atualizar_versao(diff_text):
                     subprocess.run(["git", "add", version_file], check=True, stderr=subprocess.DEVNULL)
                 except Exception:
                     pass  # Ignora erros ao adicionar ao git (pode não ser um repo git ainda)
-                return nova_versao
+                return (nova_versao, versao_anterior)
         else:
             print(f"ℹ️  Versão permanece: {versao_atual}")
         
-        return None
+        return (None, None)
     except Exception as e:
         print(f"⚠️  Erro ao atualizar versão: {e}")
-        return None
+        return (None, None)
 
 def criar_commit(mensagem):
     """Cria um novo commit com a mensagem fornecida"""
@@ -377,9 +404,15 @@ def criar_commit(mensagem):
     except subprocess.CalledProcessError as e:
         print(f"❌ Erro ao criar commit: {e}")
         return False
+    except Exception as e:
+        print(f"❌ Erro ao criar commit: {e}")
+        return False
 
 def main():
     """Função principal do programa"""
+    nova_versao = None
+    versao_anterior = None
+    
     try:
         print("🤖 AutoCommit iniciado...")
 
@@ -397,9 +430,8 @@ def main():
             return
 
         # Atualiza a versão se o versionamento estiver habilitado
-        nova_versao = None
         if ENABLE_VERSIONING:
-            nova_versao = atualizar_versao(alteracoes)
+            nova_versao, versao_anterior = atualizar_versao(alteracoes)
             # Não precisa reobter alterações pois o arquivo VERSION já foi adicionado ao index
             # e será incluído automaticamente no commit
         
@@ -425,15 +457,28 @@ def main():
         confirmar = input("❓ Deseja usar esta mensagem para o commit? (s/n): ").strip().lower()
         if confirmar != 's':
             print("❌ Commit cancelado.")
+            # Restaura a versão anterior se foi atualizada
+            if nova_versao and versao_anterior:
+                restaurar_versao(versao_anterior)
             return
 
         # Cria o commit
-        criar_commit(mensagem)
+        commit_sucesso = criar_commit(mensagem)
+        
+        # Se o commit falhou, restaura a versão anterior
+        if not commit_sucesso and nova_versao and versao_anterior:
+            restaurar_versao(versao_anterior)
 
     except KeyboardInterrupt:
         print("\n❌ Operação cancelada pelo usuário.")
+        # Restaura a versão anterior se foi atualizada
+        if nova_versao and versao_anterior:
+            restaurar_versao(versao_anterior)
     except Exception as e:
         print(f"❌ Erro inesperado: {e}")
+        # Restaura a versão anterior se foi atualizada
+        if nova_versao and versao_anterior:
+            restaurar_versao(versao_anterior)
 
 if __name__ == "__main__":
     main()
